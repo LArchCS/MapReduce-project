@@ -1,0 +1,101 @@
+package spark;
+
+import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Encoder;
+import org.apache.spark.sql.Encoders;
+
+import javax.script.ScriptEngine;
+import javax.script.ScriptEngineManager;
+import javax.script.ScriptException;
+
+import java.util.List;
+import java.util.ArrayList;
+
+public class BasicSpark {
+	public static ScriptEngineManager manager = new ScriptEngineManager();
+    public static ScriptEngine engine = manager.getEngineByName("js");
+    public static String translated = "";
+	
+	public static void main(String[] args) {
+		try {
+//			"(cats and dogs) or frogs and not(elephants and dragons)"
+			String query = "cats";
+			filters(query);
+		}
+		catch(ScriptException e) {
+			System.out.println(e.getCause());
+		}
+		
+//		filters(query);
+	}
+	
+	//String[] predicates
+	public static void filters(String query) throws ScriptException {
+		try {
+			String testFile = "C:\\Users\\Cameron\\Desktop\\CS132a\\MapReduceData";
+			SparkSession spark = SparkSession.builder().master("local[2]").appName("Basic Spark").getOrCreate();
+			Dataset<String> logData = spark.read().textFile(testFile).cache();
+			logData = evalLoop(logData, query);
+			List<String> results = logData.as(Encoders.STRING()).collectAsList();
+			for (String r:results)
+				System.out.println(r);
+		    spark.stop();
+		}
+		catch(ExceptionInInitializerError e) {
+			System.out.println(e.getException());
+			System.out.println(e.getCause());
+		}
+	}
+	
+	public static Dataset<String> evalLoop(Dataset<String> logData, String query) throws ScriptException {
+		String[] terms = query.split(" and ");
+		for(int i=0; i < terms.length - 1; i++) {
+	    	if (terms[i].contains("(")) {
+	    		translated += construct(terms[i].substring(1, terms[i].length()- 1)) + " && ";
+	    	}
+	    	else {
+	    		translated += construct(terms[i]) + " && ";
+	    	}
+	    }		
+		if (terms[terms.length-1].contains("(")) {
+    		translated += construct(terms[terms.length-1].substring(1, terms[terms.length-1].length() - 1));
+    	}
+    	else {
+    		translated += construct(terms[terms.length-1]);
+    	}
+		logData = logData.filter(s -> evaluate(s, translated));
+		System.out.println("\n\n meow \n\n");
+		return logData;
+	}
+	
+	public static String construct(String term) throws ScriptException {
+		String[] parts = term.split(" or ");
+		String predicate = "";
+		for(int i=0; i<parts.length - 1; i++) {
+			String part = "term" + i;
+			engine.put(part, parts[i]);
+			if (parts[i].substring(0, 3).equals("not(")) {
+				predicate += "!s.contains(term" + i + ") || ";
+			}
+			else {
+				predicate += "s.contains(term" + i + ") || ";
+			}
+		}
+		//The case where length = n
+		String part = "term" + (parts.length-1);
+		engine.put(part, parts[parts.length-1]);
+		if (parts[parts.length-1].substring(0, 3).equals("not(")) {
+			predicate += "!s.contains(term" + (parts.length-1) + ")";
+		}
+		else {
+			predicate += "s.contains(term" + (parts.length-1) + ")";
+		}
+		return predicate;
+	}
+	
+	public static boolean evaluate(String line, String logic) throws ScriptException {
+		engine.put("s", line);
+		return Boolean.TRUE.equals(engine.eval(logic));
+	}
+}
